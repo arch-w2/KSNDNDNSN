@@ -1,0 +1,212 @@
+-- MORTY HUB | INVENTORY TXT - BQM
+-- Add-on para tu Morty Hub / WindUI.
+-- Pega este bloque DESPUES de crear la pestaña Visual (variable: Visual).
+-- No usa RemoteEvents ni APIs externas.
+-- Nota: solo puede mostrar herramientas que el cliente realmente tenga replicadas.
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local INVENTORY_TAG = "MortyInventoryTXT"
+local inventoryEnabled = false
+local inventoryConnections = {}
+local refreshLoopRunning = false
+
+local RARITY_COLORS = {
+    common = Color3.fromRGB(190, 198, 210),       -- gris plata
+    uncommon = Color3.fromRGB(91, 220, 137),      -- verde
+    rare = Color3.fromRGB(83, 166, 255),          -- azul
+    epic = Color3.fromRGB(190, 112, 255),         -- violeta
+    legendary = Color3.fromRGB(255, 205, 70), -- reemplazado abajo
+    mythic = Color3.fromRGB(255, 105, 135),       -- rosa/rojo
+    divine = Color3.fromRGB(90, 235, 235),        -- cian
+}
+
+-- Corrige el valor de Legendary sin depender de ningún dato del juego.
+RARITY_COLORS.legendary = Color3.fromRGB(255, 205, 70)
+
+local function getRarity(tool)
+    local rarity = tool:GetAttribute("Rarity")
+
+    if rarity == nil then
+        local valueObject = tool:FindFirstChild("Rarity", true)
+        if valueObject and (valueObject:IsA("StringValue") or valueObject:IsA("IntValue") or valueObject:IsA("NumberValue")) then
+            rarity = valueObject.Value
+        end
+    end
+
+    if rarity == nil or tostring(rarity) == "" then
+        return "UNKNOWN", Color3.fromRGB(170, 178, 190)
+    end
+
+    local rarityName = tostring(rarity)
+    local key = string.lower(rarityName)
+    local color = RARITY_COLORS[key] or Color3.fromRGB(170, 178, 190)
+    return string.upper(rarityName), color
+end
+
+local function getPlayerTools(player)
+    local found = {}
+    local character = player.Character
+    local backpack = player:FindFirstChildOfClass("Backpack")
+
+    local function collect(container)
+        if not container then return end
+        for _, item in ipairs(container:GetChildren()) do
+            if item:IsA("Tool") then
+                table.insert(found, item)
+            end
+        end
+    end
+
+    collect(character)
+    collect(backpack)
+
+    table.sort(found, function(a, b)
+        return a.Name:lower() < b.Name:lower()
+    end)
+
+    return found
+end
+
+local function removeInventoryGui(player)
+    local character = player.Character
+    if not character then return end
+    local old = character:FindFirstChild(INVENTORY_TAG)
+    if old then old:Destroy() end
+end
+
+local function makeInventoryGui(player)
+    local character = player.Character
+    if not character then return end
+
+    local adornee = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not adornee then return end
+
+    removeInventoryGui(player)
+
+    local tools = getPlayerTools(player)
+    if #tools == 0 then return end
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = INVENTORY_TAG
+    billboard.Adornee = adornee
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.MaxDistance = 180
+    billboard.Size = UDim2.fromOffset(250, math.min(220, 34 + (#tools * 21)))
+    billboard.StudsOffset = Vector3.new(0, 3.4, 0)
+    billboard.Parent = character
+
+    local panel = Instance.new("Frame")
+    panel.Name = "Panel"
+    panel.BackgroundColor3 = Color3.fromRGB(14, 18, 29)
+    panel.BackgroundTransparency = 0.18
+    panel.BorderSizePixel = 0
+    panel.Size = UDim2.fromScale(1, 1)
+    panel.Parent = billboard
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = panel
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(90, 135, 210)
+    stroke.Transparency = 0.2
+    stroke.Thickness = 1.2
+    stroke.Parent = panel
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingTop = UDim.new(0, 5)
+    padding.PaddingBottom = UDim.new(0, 5)
+    padding.PaddingLeft = UDim.new(0, 8)
+    padding.PaddingRight = UDim.new(0, 8)
+    padding.Parent = panel
+
+    local layout = Instance.new("UIListLayout")
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 2)
+    layout.Parent = panel
+
+    local header = Instance.new("TextLabel")
+    header.Name = "Header"
+    header.BackgroundTransparency = 1
+    header.Size = UDim2.new(1, 0, 0, 19)
+    header.Font = Enum.Font.GothamBold
+    header.Text = "INVENTORY • " .. player.DisplayName
+    header.TextColor3 = Color3.fromRGB(225, 235, 255)
+    header.TextSize = 11
+    header.TextXAlignment = Enum.TextXAlignment.Left
+    header.Parent = panel
+
+    for index, tool in ipairs(tools) do
+        local rarityText, rarityColor = getRarity(tool)
+
+        local line = Instance.new("TextLabel")
+        line.Name = "Item_" .. index
+        line.BackgroundTransparency = 1
+        line.Size = UDim2.new(1, 0, 0, 18)
+        line.Font = Enum.Font.GothamSemibold
+        line.Text = tool.Name .. "  •  " .. rarityText
+        line.TextColor3 = rarityColor
+        line.TextSize = 10
+        line.TextTruncate = Enum.TextTruncate.AtEnd
+        line.TextXAlignment = Enum.TextXAlignment.Left
+        line.Parent = panel
+    end
+end
+
+local function refreshAll()
+    if not inventoryEnabled then return end
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            makeInventoryGui(player)
+        end
+    end
+end
+
+local function clearAll()
+    for _, player in ipairs(Players:GetPlayers()) do
+        removeInventoryGui(player)
+    end
+end
+
+local function setInventoryEnabled(state)
+    inventoryEnabled = state
+
+    if not state then
+        clearAll()
+        return
+    end
+
+    refreshAll()
+
+    if refreshLoopRunning then return end
+    refreshLoopRunning = true
+
+    task.spawn(function()
+        while inventoryEnabled do
+            task.wait(1)
+            refreshAll()
+        end
+        refreshLoopRunning = false
+    end)
+end
+
+-- Control de WindUI dentro de tu pestaña Visual.
+Visual:Toggle({
+    Title = "Inventory TXT",
+    Desc = "Muestra objetos y Rarity con colores sobre cada jugador",
+    Value = false,
+    Callback = function(state)
+        setInventoryEnabled(state)
+    end
+})
+
+Players.PlayerRemoving:Connect(function(player)
+    removeInventoryGui(player)
+end)
+
+-- Colores:
+-- Common gris | Uncommon verde | Rare azul | Epic violeta
+-- Legendary dorado | Mythic rosa/rojo | Divine cian
